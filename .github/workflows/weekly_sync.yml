@@ -1,0 +1,109 @@
+name: Weekly Garmin Sync & Dashboard Deploy
+
+on:
+  # Run every Monday at 6:00 AM UTC (7:00 CET)
+  schedule:
+    - cron: '0 6 * * 1'
+  # Allow manual trigger from GitHub UI
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+jobs:
+  sync-and-deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Create data directory
+        run: mkdir -p garmin_data/health
+
+      - name: Download previous progress log
+        continue-on-error: true
+        run: |
+          # Try to fetch progress_log.csv from gh-pages if it exists
+          git fetch origin gh-pages --depth=1 2>/dev/null || true
+          git checkout origin/gh-pages -- progress_log.csv 2>/dev/null || echo "No previous progress log found"
+
+      - name: Sync Garmin activities
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          DATA_FOLDER: garmin_data
+        run: python garmin_fixed.py
+        continue-on-error: true
+
+      - name: Sync Garmin health data
+        env:
+          GARMIN_EMAIL: ${{ secrets.GARMIN_EMAIL }}
+          GARMIN_PASSWORD: ${{ secrets.GARMIN_PASSWORD }}
+          DATA_FOLDER: garmin_data
+        run: python garmin_health_fixed.py
+        continue-on-error: true
+
+      - name: Generate dashboard
+        env:
+          DATA_FOLDER: garmin_data
+        run: python analyze_and_dashboard.py
+
+      - name: Generate progress tracker
+        env:
+          DATA_FOLDER: garmin_data
+        run: python sync_and_track.py --skip-sync
+
+      - name: Prepare deploy folder
+        run: |
+          mkdir -p deploy
+          cp dashboard.html deploy/index.html
+          cp progress_dashboard.html deploy/progress.html
+          # Keep progress log for persistence across runs
+          if [ -f progress_log.csv ]; then
+            cp progress_log.csv deploy/progress_log.csv
+          fi
+          # Create a simple nav page
+          cat > deploy/nav.html << 'NAVEOF'
+          <!DOCTYPE html>
+          <html><head>
+            <meta charset="UTF-8">
+            <title>Garmin PRO Trener</title>
+            <style>
+              body { font-family: -apple-system, sans-serif; background: #1e1e2e; color: #e0e0e0;
+                     display: flex; flex-direction: column; align-items: center; justify-content: center;
+                     min-height: 100vh; gap: 20px; }
+              a { display: block; background: linear-gradient(135deg, #1a237e, #0d47a1);
+                  padding: 24px 48px; border-radius: 12px; color: #fff; text-decoration: none;
+                  font-size: 18px; font-weight: 600; transition: transform 0.2s; min-width: 300px; text-align: center; }
+              a:hover { transform: scale(1.05); }
+              h1 { font-size: 28px; margin-bottom: 10px; }
+              p { color: #a0a0b0; font-size: 14px; }
+            </style>
+          </head><body>
+            <h1>Garmin PRO Trener</h1>
+            <p>Half Marathon Training Dashboard</p>
+            <a href="index.html">Full Dashboard</a>
+            <a href="progress.html">Progress Tracker</a>
+          </body></html>
+          NAVEOF
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./deploy
+          force_orphan: true
+          commit_message: 'Weekly dashboard update'

@@ -1,0 +1,32 @@
+# Credentials & tokens - NEVER COMMIT
+.env
+garmin_data/.garth/
+garmin_data/garmin_tokens
+
+# Data files (regenerated on every sync)
+garmin_data/*.json
+garmin_data/*.csv
+garmin_data/health/
+
+# Generated HTML (deployed via gh-pages branch)
+dashboard.html
+progress_dashboard.html
+progress_log.csv
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+venv/
+env/
+ENV/
+
+# VS Code
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+nul
