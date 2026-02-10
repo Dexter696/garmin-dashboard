@@ -1,4 +1,4 @@
-name: Weekly Garmin Sync & Dashboard Deploy
+name: Weekly Garmin Sync
 
 on:
   # Run every Monday at 6:00 AM UTC (7:00 CET)
