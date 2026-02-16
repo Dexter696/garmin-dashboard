@@ -31,6 +31,13 @@ try:
 except ImportError:
     HAS_TRAINING_PLAN = False
 
+# Import readiness system (optional - graceful fallback)
+try:
+    from readiness_system import compute_readiness_for_dashboard
+    HAS_READINESS = True
+except ImportError:
+    HAS_READINESS = False
+
 # ─── Configuration ───────────────────────────────────────────────────────────
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -691,6 +698,474 @@ def build_correlation_heatmap(corr_df):
     )
     return fig
 
+def build_lactate_and_fitness_charts(df):
+    """Section: Lactate Threshold, Training Status, and Fitness Age charts."""
+    has_lt_pace = 'ltPaceMinKm' in df.columns and df['ltPaceMinKm'].notna().any()
+    has_lt_hr = 'ltHeartRate' in df.columns and df['ltHeartRate'].notna().any()
+    has_fitness_age = 'fitnessAge' in df.columns and df['fitnessAge'].notna().any()
+    has_training_status = 'trainingStatus' in df.columns and df['trainingStatus'].notna().any()
+
+    if not any([has_lt_pace, has_lt_hr, has_fitness_age, has_training_status]):
+        return None
+
+    # Determine subplot count
+    rows = 2
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=(
+            'Lactate Threshold Pace',
+            'Lactate Threshold Heart Rate',
+            'Fitness Age vs Chronological Age',
+            'Training Load Focus',
+        ),
+        vertical_spacing=0.15, horizontal_spacing=0.1,
+    )
+
+    # LT Pace trend
+    if has_lt_pace:
+        lt_pace = df[df['ltPaceMinKm'].notna()]
+        fig.add_trace(go.Scatter(
+            x=lt_pace['date'], y=lt_pace['ltPaceMinKm'],
+            name='LT Pace', mode='lines+markers',
+            line=dict(color=COLORS['primary'], width=2.5), marker=dict(size=6),
+            hovertemplate='%{x|%d %b}<br>LT Pace: %{y:.2f} min/km<extra></extra>',
+        ), row=1, col=1)
+        # Add trend line
+        if len(lt_pace) >= 3:
+            lt_series = df.set_index('date')['ltPaceMinKm'].dropna()
+            lt_trend = lt_series.rolling(5, min_periods=2).mean()
+            fig.add_trace(go.Scatter(
+                x=lt_trend.index, y=lt_trend.values,
+                name='LT Pace Trend', mode='lines',
+                line=dict(color=COLORS['info'], width=2, dash='dash'),
+                hovertemplate='%{x|%d %b}<br>Trend: %{y:.2f} min/km<extra></extra>',
+            ), row=1, col=1)
+
+    # LT Heart Rate trend
+    if has_lt_hr:
+        lt_hr = df[df['ltHeartRate'].notna()]
+        fig.add_trace(go.Scatter(
+            x=lt_hr['date'], y=lt_hr['ltHeartRate'],
+            name='LT HR', mode='lines+markers',
+            line=dict(color=COLORS['secondary'], width=2.5), marker=dict(size=6),
+            hovertemplate='%{x|%d %b}<br>LT HR: %{y:.0f} bpm<extra></extra>',
+        ), row=1, col=2)
+        if len(lt_hr) >= 3:
+            lt_hr_series = df.set_index('date')['ltHeartRate'].dropna()
+            lt_hr_trend = lt_hr_series.rolling(5, min_periods=2).mean()
+            fig.add_trace(go.Scatter(
+                x=lt_hr_trend.index, y=lt_hr_trend.values,
+                name='LT HR Trend', mode='lines',
+                line=dict(color=COLORS['info'], width=2, dash='dash'),
+                hovertemplate='%{x|%d %b}<br>Trend: %{y:.0f} bpm<extra></extra>',
+            ), row=1, col=2)
+
+    # Fitness Age
+    if has_fitness_age:
+        fa = df[df['fitnessAge'].notna()]
+        fig.add_trace(go.Scatter(
+            x=fa['date'], y=fa['fitnessAge'],
+            name='Fitness Age', mode='lines+markers',
+            line=dict(color=COLORS['success'], width=2.5), marker=dict(size=7),
+            hovertemplate='%{x|%d %b}<br>Fitness Age: %{y:.1f}<extra></extra>',
+        ), row=2, col=1)
+        # Chronological age line
+        if 'chronologicalAge' in df.columns and df['chronologicalAge'].notna().any():
+            chrono = df[df['chronologicalAge'].notna()]
+            fig.add_trace(go.Scatter(
+                x=chrono['date'], y=chrono['chronologicalAge'],
+                name='Chronological Age', mode='lines',
+                line=dict(color=COLORS['text_secondary'], width=2, dash='dot'),
+                hovertemplate='%{x|%d %b}<br>Actual Age: %{y:.0f}<extra></extra>',
+            ), row=2, col=1)
+
+    # Training Load Focus (stacked area)
+    has_load = all(c in df.columns for c in ['loadFocusLow', 'loadFocusHigh', 'loadFocusAnaerobic'])
+    if has_load:
+        load_data = df[df['loadFocusLow'].notna()].copy()
+        if len(load_data) > 0:
+            fig.add_trace(go.Scatter(
+                x=load_data['date'], y=load_data['loadFocusLow'],
+                name='Low Aerobic', mode='lines', stackgroup='load',
+                line=dict(width=0), fillcolor='rgba(66, 133, 244, 0.6)',
+                hovertemplate='%{x|%d %b}<br>Low Aerobic: %{y:.0f}<extra></extra>',
+            ), row=2, col=2)
+            fig.add_trace(go.Scatter(
+                x=load_data['date'], y=load_data['loadFocusHigh'],
+                name='High Aerobic', mode='lines', stackgroup='load',
+                line=dict(width=0), fillcolor='rgba(251, 188, 4, 0.6)',
+                hovertemplate='%{x|%d %b}<br>High Aerobic: %{y:.0f}<extra></extra>',
+            ), row=2, col=2)
+            fig.add_trace(go.Scatter(
+                x=load_data['date'], y=load_data['loadFocusAnaerobic'],
+                name='Anaerobic', mode='lines', stackgroup='load',
+                line=dict(width=0), fillcolor='rgba(234, 67, 53, 0.6)',
+                hovertemplate='%{x|%d %b}<br>Anaerobic: %{y:.0f}<extra></extra>',
+            ), row=2, col=2)
+
+    fig.update_layout(
+        height=550, template='plotly_dark',
+        paper_bgcolor=COLORS['bg_dark'], plot_bgcolor=COLORS['bg_card'],
+        font=dict(color=COLORS['text_primary']),
+        legend=dict(orientation='h', yanchor='bottom', y=1.05, xanchor='center', x=0.5, font=dict(size=10)),
+        margin=dict(l=50, r=50, t=70, b=30),
+    )
+    for i in range(1, 5):
+        fig.update_xaxes(gridcolor=COLORS['grid'], row=(i-1)//2+1, col=(i-1)%2+1)
+        fig.update_yaxes(gridcolor=COLORS['grid'], row=(i-1)//2+1, col=(i-1)%2+1)
+
+    # Invert y-axis for LT pace (lower is better/faster)
+    if has_lt_pace:
+        fig.update_yaxes(autorange='reversed', title_text='min/km (lower=faster)', row=1, col=1)
+    if has_lt_hr:
+        fig.update_yaxes(title_text='bpm', row=1, col=2)
+    if has_fitness_age:
+        fig.update_yaxes(title_text='Age (years)', row=2, col=1)
+
+    return fig
+
+
+def build_readiness_gauge(readiness_data):
+    """Build readiness gauge (0-100) with recommendation badge, confidence, reasoning."""
+    if not readiness_data:
+        return ''
+
+    latest = readiness_data.get('latest_readiness', {})
+    score = latest.get('readiness_score', 0)
+    rec = latest.get('recommendation', 'MODERATE')
+    rec_info = latest.get('recommendation_info', {})
+    confidence = latest.get('confidence', 80)
+    reasoning = latest.get('reasoning', [])
+    wb = latest.get('wellbeing_proxy', 0)
+
+    rec_color = rec_info.get('color', COLORS['text_secondary'])
+    rec_desc = rec_info.get('description', '')
+
+    # Gauge figure
+    fig = go.Figure(go.Indicator(
+        mode="gauge+number",
+        value=score,
+        number=dict(font=dict(size=48, color=COLORS['text_primary'])),
+        gauge=dict(
+            axis=dict(range=[0, 100], tickcolor=COLORS['text_secondary'],
+                      tickfont=dict(color=COLORS['text_secondary'])),
+            bar=dict(color=rec_color),
+            bgcolor=COLORS['bg_surface'],
+            bordercolor=COLORS['grid'],
+            steps=[
+                dict(range=[0, 40], color='rgba(234, 67, 53, 0.15)'),
+                dict(range=[40, 60], color='rgba(255, 152, 0, 0.15)'),
+                dict(range=[60, 80], color='rgba(251, 188, 4, 0.15)'),
+                dict(range=[80, 100], color='rgba(52, 168, 83, 0.15)'),
+            ],
+            threshold=dict(line=dict(color=rec_color, width=4), thickness=0.8, value=score),
+        ),
+        title=dict(text="Readiness Score", font=dict(size=14, color=COLORS['text_secondary'])),
+    ))
+    fig.update_layout(
+        height=280, template='plotly_dark',
+        paper_bgcolor=COLORS['bg_card'], plot_bgcolor=COLORS['bg_card'],
+        font=dict(color=COLORS['text_primary']),
+        margin=dict(l=30, r=30, t=60, b=10),
+    )
+    gauge_html = fig.to_html(full_html=False, include_plotlyjs=False)
+
+    # Recommendation badge + reasoning
+    reasoning_items = ''.join(
+        f'<div style="color:{COLORS["text_secondary"]};font-size:12px;padding:3px 0;">- {r}</div>'
+        for r in reasoning[:5]
+    )
+
+    badge_html = f"""
+    <div style="background:{COLORS['bg_card']};border-radius:12px;padding:20px;">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+            <div style="background:{rec_color};color:#fff;padding:8px 20px;border-radius:20px;
+                        font-size:18px;font-weight:700;letter-spacing:1px;">{rec}</div>
+            <div>
+                <div style="color:{COLORS['text_primary']};font-size:14px;font-weight:600;">{rec_desc}</div>
+                <div style="color:{COLORS['text_secondary']};font-size:12px;">Confidence: {confidence}%</div>
+            </div>
+        </div>
+        <div style="display:flex;gap:16px;margin-bottom:16px;flex-wrap:wrap;">
+            <div style="background:{COLORS['bg_surface']};padding:8px 14px;border-radius:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;color:{COLORS['teal']};">{latest.get('hrv', 0):.0f}</div>
+                <div style="font-size:10px;color:{COLORS['text_secondary']};">HRV (ms)</div>
+            </div>
+            <div style="background:{COLORS['bg_surface']};padding:8px 14px;border-radius:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;color:{COLORS['secondary']};">{latest.get('rhr', 0):.0f}</div>
+                <div style="font-size:10px;color:{COLORS['text_secondary']};">RHR (bpm)</div>
+            </div>
+            <div style="background:{COLORS['bg_surface']};padding:8px 14px;border-radius:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;color:{COLORS['purple']};">{latest.get('sleep_hours', 0):.1f}h</div>
+                <div style="font-size:10px;color:{COLORS['text_secondary']};">Sleep</div>
+            </div>
+            <div style="background:{COLORS['bg_surface']};padding:8px 14px;border-radius:8px;text-align:center;">
+                <div style="font-size:18px;font-weight:700;color:{COLORS['info']};">{wb:.0f}/28</div>
+                <div style="font-size:10px;color:{COLORS['text_secondary']};">Wellbeing</div>
+            </div>
+        </div>
+        <div style="border-top:1px solid {COLORS['grid']};padding-top:12px;">
+            <div style="color:{COLORS['text_secondary']};font-size:11px;text-transform:uppercase;margin-bottom:6px;">Reasoning</div>
+            {reasoning_items}
+        </div>
+    </div>"""
+
+    return f"""
+    <div class="two-col">
+        <div>{gauge_html}</div>
+        <div>{badge_html}</div>
+    </div>"""
+
+
+def build_warning_panel(readiness_data):
+    """Build warning panel: sleep debt streak, HRV CV status, overtraining risk cards."""
+    if not readiness_data:
+        return ''
+
+    latest = readiness_data.get('latest_readiness', {})
+    overtraining = readiness_data.get('overtraining', {})
+
+    sleep_streak = latest.get('sleep_streak_under_7h', 0)
+    hrv_cv = latest.get('hrv_cv', 0)
+    ot_count = overtraining.get('count', 0)
+
+    # Sleep debt card
+    if sleep_streak >= 3:
+        sleep_color = COLORS['secondary']
+        sleep_status = 'ELEVATED RISK'
+    elif sleep_streak >= 1:
+        sleep_color = COLORS['warning']
+        sleep_status = 'WATCH'
+    else:
+        sleep_color = COLORS['success']
+        sleep_status = 'OK'
+
+    # HRV CV card (Garmin overnight thresholds: <15% stable, 15-20% borderline, >20% elevated)
+    if hrv_cv > 20:
+        cv_color = COLORS['secondary']
+        cv_status = 'ELEVATED'
+    elif hrv_cv > 15:
+        cv_color = COLORS['warning']
+        cv_status = 'BORDERLINE'
+    else:
+        cv_color = COLORS['success']
+        cv_status = 'STABLE'
+
+    # Overtraining risk card
+    if ot_count >= 3:
+        ot_color = COLORS['secondary']
+        ot_status = 'HIGH RISK'
+    elif ot_count >= 1:
+        ot_color = COLORS['warning']
+        ot_status = 'WARNING'
+    else:
+        ot_color = COLORS['success']
+        ot_status = 'LOW RISK'
+
+    ot_details = ''
+    for d in overtraining.get('details', [])[:3]:
+        ot_details += f'<div style="font-size:11px;color:{COLORS["text_secondary"]};margin-top:4px;">- {d}</div>'
+
+    cards = f"""
+    <div style="display:flex;gap:16px;flex-wrap:wrap;">
+        <div style="background:{COLORS['bg_card']};border-radius:12px;padding:18px 22px;border-left:4px solid {sleep_color};flex:1;min-width:200px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div style="color:{COLORS['text_secondary']};font-size:12px;text-transform:uppercase;">Sleep Debt</div>
+                <div style="background:{sleep_color};color:#fff;padding:2px 10px;border-radius:8px;font-size:10px;font-weight:600;">{sleep_status}</div>
+            </div>
+            <div style="color:{COLORS['text_primary']};font-size:28px;font-weight:700;margin:6px 0;">{sleep_streak} days</div>
+            <div style="color:{COLORS['text_secondary']};font-size:11px;">Consecutive days sleep &lt;7h</div>
+            {'<div style="color:'+COLORS['secondary']+';font-size:11px;margin-top:4px;">14+ days = 1.7x injury risk</div>' if sleep_streak >= 7 else ''}
+        </div>
+        <div style="background:{COLORS['bg_card']};border-radius:12px;padding:18px 22px;border-left:4px solid {cv_color};flex:1;min-width:200px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div style="color:{COLORS['text_secondary']};font-size:12px;text-transform:uppercase;">HRV Variability</div>
+                <div style="background:{cv_color};color:#fff;padding:2px 10px;border-radius:8px;font-size:10px;font-weight:600;">{cv_status}</div>
+            </div>
+            <div style="color:{COLORS['text_primary']};font-size:28px;font-weight:700;margin:6px 0;">{hrv_cv:.1f}%</div>
+            <div style="color:{COLORS['text_secondary']};font-size:11px;">HRV Coefficient of Variation (CV)</div>
+            <div style="color:{COLORS['text_secondary']};font-size:11px;margin-top:2px;">&lt;15% stable | 15-20% borderline | &gt;20% elevated</div>
+        </div>
+        <div style="background:{COLORS['bg_card']};border-radius:12px;padding:18px 22px;border-left:4px solid {ot_color};flex:1;min-width:200px;">
+            <div style="display:flex;justify-content:space-between;align-items:center;">
+                <div style="color:{COLORS['text_secondary']};font-size:12px;text-transform:uppercase;">Overtraining Risk</div>
+                <div style="background:{ot_color};color:#fff;padding:2px 10px;border-radius:8px;font-size:10px;font-weight:600;">{ot_status}</div>
+            </div>
+            <div style="color:{COLORS['text_primary']};font-size:28px;font-weight:700;margin:6px 0;">{ot_count}/4</div>
+            <div style="color:{COLORS['text_secondary']};font-size:11px;">Indicators detected (of 4 monitored)</div>
+            {ot_details}
+        </div>
+    </div>"""
+
+    return cards
+
+
+def build_lag_heatmap(readiness_data):
+    """Build Plotly heatmap: pairs x lag 0-3, color=r-value, annotated with significance."""
+    if not readiness_data:
+        return None
+
+    lag_results = readiness_data.get('lag_results', [])
+    if not lag_results:
+        return None
+
+    labels = [lr['label'] for lr in lag_results]
+    lags = [0, 1, 2, 3]
+
+    z = []
+    annotations = []
+    for i, lr in enumerate(lag_results):
+        row = []
+        for lag in lags:
+            if lag in lr['lags']:
+                r = lr['lags'][lag]['r']
+                sig = lr['lags'][lag]['significant']
+                row.append(r)
+                text = f"{r:+.2f}{'*' if sig else ''}"
+                annotations.append(dict(
+                    x=lag, y=i, text=text,
+                    font=dict(size=10, color='white' if abs(r) > 0.3 else COLORS['text_primary']),
+                    showarrow=False,
+                ))
+            else:
+                row.append(0)
+        z.append(row)
+
+    fig = go.Figure(data=go.Heatmap(
+        z=z, x=[f'Lag {l}d' for l in lags], y=labels,
+        colorscale='RdBu_r', zmin=-0.6, zmax=0.6,
+        hovertemplate='%{y}<br>%{x}<br>r = %{z:.3f}<extra></extra>',
+    ))
+
+    for ann in annotations:
+        fig.add_annotation(**ann)
+
+    fig.update_layout(
+        height=max(300, len(labels) * 35 + 80),
+        template='plotly_dark',
+        paper_bgcolor=COLORS['bg_dark'], plot_bgcolor=COLORS['bg_card'],
+        font=dict(color=COLORS['text_primary']),
+        margin=dict(l=180, r=50, t=30, b=40),
+        xaxis=dict(side='top'),
+    )
+    return fig
+
+
+def build_hrv_bands_chart(df):
+    """Build HRV daily + 7d avg + +/-0.5SD green band + -1.0SD red line."""
+    hrv_col = 'hrvLastNightAvg'
+    if hrv_col not in df.columns or not df[hrv_col].notna().any():
+        return None
+
+    hrv_data = df[['date', hrv_col]].dropna().copy()
+    hrv_data['hrv_7d_mean'] = hrv_data[hrv_col].rolling(7, min_periods=3).mean()
+    hrv_data['hrv_7d_sd'] = hrv_data[hrv_col].rolling(7, min_periods=3).std()
+    hrv_data['upper_band'] = hrv_data['hrv_7d_mean'] + 0.5 * hrv_data['hrv_7d_sd']
+    hrv_data['lower_band'] = hrv_data['hrv_7d_mean'] - 0.5 * hrv_data['hrv_7d_sd']
+    hrv_data['red_line'] = hrv_data['hrv_7d_mean'] - 1.0 * hrv_data['hrv_7d_sd']
+
+    fig = go.Figure()
+
+    # Green band (normal range)
+    band_data = hrv_data.dropna(subset=['upper_band', 'lower_band'])
+    fig.add_trace(go.Scatter(
+        x=band_data['date'], y=band_data['upper_band'],
+        mode='lines', line=dict(width=0), showlegend=False,
+        hoverinfo='skip',
+    ))
+    fig.add_trace(go.Scatter(
+        x=band_data['date'], y=band_data['lower_band'],
+        mode='lines', line=dict(width=0),
+        fill='tonexty', fillcolor='rgba(52, 168, 83, 0.15)',
+        name='Normal Range (±0.5 SD)',
+        hoverinfo='skip',
+    ))
+
+    # Red line (-1.0 SD)
+    red_data = hrv_data.dropna(subset=['red_line'])
+    fig.add_trace(go.Scatter(
+        x=red_data['date'], y=red_data['red_line'],
+        mode='lines', line=dict(color=COLORS['secondary'], width=1.5, dash='dash'),
+        name='Alert (-1.0 SD)',
+        hovertemplate='%{x|%d %b}<br>Alert line: %{y:.0f} ms<extra></extra>',
+    ))
+
+    # 7-day average
+    avg_data = hrv_data.dropna(subset=['hrv_7d_mean'])
+    fig.add_trace(go.Scatter(
+        x=avg_data['date'], y=avg_data['hrv_7d_mean'],
+        mode='lines', line=dict(color=COLORS['info'], width=2.5),
+        name='7-Day Average',
+        hovertemplate='%{x|%d %b}<br>7d Avg: %{y:.0f} ms<extra></extra>',
+    ))
+
+    # Daily HRV
+    fig.add_trace(go.Scatter(
+        x=hrv_data['date'], y=hrv_data[hrv_col],
+        mode='lines+markers', line=dict(color=COLORS['teal'], width=1.5),
+        marker=dict(size=5), name='Daily HRV',
+        hovertemplate='%{x|%d %b}<br>HRV: %{y:.0f} ms<extra></extra>',
+    ))
+
+    fig.update_layout(
+        height=350, template='plotly_dark',
+        paper_bgcolor=COLORS['bg_dark'], plot_bgcolor=COLORS['bg_card'],
+        font=dict(color=COLORS['text_primary']),
+        legend=dict(orientation='h', yanchor='bottom', y=1.02, xanchor='right', x=1, font=dict(size=10)),
+        margin=dict(l=50, r=30, t=40, b=30),
+        yaxis=dict(title='HRV (ms)', gridcolor=COLORS['grid']),
+        xaxis=dict(gridcolor=COLORS['grid']),
+    )
+    return fig
+
+
+def build_sleep_bars_chart(df):
+    """Build sleep bars color-coded (green>=7h, orange 6-7h, red<6h) + 7h threshold."""
+    sleep_col = 'sleepTimeHours'
+    if sleep_col not in df.columns or not df[sleep_col].notna().any():
+        return None
+
+    sleep_data = df[['date', sleep_col]].dropna().copy()
+
+    colors = []
+    for h in sleep_data[sleep_col]:
+        if h >= 7:
+            colors.append(COLORS['success'])
+        elif h >= 6:
+            colors.append(COLORS['warning'])
+        else:
+            colors.append(COLORS['secondary'])
+
+    fig = go.Figure()
+
+    fig.add_trace(go.Bar(
+        x=sleep_data['date'], y=sleep_data[sleep_col],
+        marker_color=colors, name='Sleep Duration',
+        hovertemplate='%{x|%d %b}<br>Sleep: %{y:.1f}h<extra></extra>',
+    ))
+
+    # 7h threshold line
+    fig.add_hline(y=7, line_dash='dash', line_color=COLORS['warning'],
+                  annotation_text='7h target', annotation_position='bottom right',
+                  annotation_font=dict(size=10, color=COLORS['warning']))
+
+    # 8h optimal line
+    fig.add_hline(y=8, line_dash='dot', line_color=COLORS['success'],
+                  annotation_text='8h optimal', annotation_position='top right',
+                  annotation_font=dict(size=10, color=COLORS['success']))
+
+    fig.update_layout(
+        height=350, template='plotly_dark',
+        paper_bgcolor=COLORS['bg_dark'], plot_bgcolor=COLORS['bg_card'],
+        font=dict(color=COLORS['text_primary']),
+        margin=dict(l=50, r=30, t=40, b=30),
+        yaxis=dict(title='Sleep (hours)', gridcolor=COLORS['grid'], range=[0, max(10, sleep_data[sleep_col].max() + 0.5)]),
+        xaxis=dict(gridcolor=COLORS['grid']),
+        showlegend=False,
+    )
+    return fig
+
+
 def build_activities_breakdown(act):
     """Bonus: Activities breakdown by type."""
     fig = make_subplots(
@@ -1234,12 +1709,13 @@ def build_training_plan_progress(df, act):
     return section
 
 
-def build_dashboard(df, act, corr_df, top_corrs, insights):
+def build_dashboard(df, act, corr_df, top_corrs, insights, readiness_data=None):
     """Assemble the full HTML dashboard."""
 
     # Build all figures
     fig_timeline = build_training_timeline(df)
     fig_performance = build_performance_trends(df)
+    fig_lt_fitness = build_lactate_and_fitness_charts(df)
     fig_recovery = build_recovery_wellness(df)
     fig_heatmap = build_correlation_heatmap(corr_df)
     fig_activities = build_activities_breakdown(act)
@@ -1247,6 +1723,7 @@ def build_dashboard(df, act, corr_df, top_corrs, insights):
     # Convert to HTML divs
     timeline_html = fig_timeline.to_html(full_html=False, include_plotlyjs=False)
     performance_html = fig_performance.to_html(full_html=False, include_plotlyjs=False)
+    lt_fitness_html = fig_lt_fitness.to_html(full_html=False, include_plotlyjs=False) if fig_lt_fitness else ''
     recovery_html = fig_recovery.to_html(full_html=False, include_plotlyjs=False)
     heatmap_html = fig_heatmap.to_html(full_html=False, include_plotlyjs=False)
     activities_html = fig_activities.to_html(full_html=False, include_plotlyjs=False)
@@ -1266,9 +1743,80 @@ def build_dashboard(df, act, corr_df, top_corrs, insights):
         insights_html += f'<div style="background:{COLORS["bg_surface"]};padding:10px 14px;border-radius:8px;color:{COLORS["text_primary"]};font-size:13px;line-height:1.5;">{insight}</div>'
     insights_html += '</div>'
 
+    # Build readiness sections (if available)
+    readiness_gauge_html = ''
+    warning_panel_html = ''
+    lag_heatmap_html = ''
+    hrv_bands_html = ''
+    sleep_bars_html = ''
+
+    if readiness_data:
+        readiness_gauge_html = build_readiness_gauge(readiness_data)
+        warning_panel_html = build_warning_panel(readiness_data)
+
+        fig_lag = build_lag_heatmap(readiness_data)
+        if fig_lag:
+            lag_heatmap_html = fig_lag.to_html(full_html=False, include_plotlyjs=False)
+
+        fig_hrv_bands = build_hrv_bands_chart(df)
+        if fig_hrv_bands:
+            hrv_bands_html = fig_hrv_bands.to_html(full_html=False, include_plotlyjs=False)
+
+        fig_sleep_bars = build_sleep_bars_chart(df)
+        if fig_sleep_bars:
+            sleep_bars_html = fig_sleep_bars.to_html(full_html=False, include_plotlyjs=False)
+
     # Date info
     date_from = df['date'].min().strftime('%d %b %Y')
     date_to = df['date'].max().strftime('%d %b %Y')
+
+    # Build readiness & recovery sections HTML
+    readiness_section = ''
+    if readiness_gauge_html:
+        readiness_section = f"""
+        <div class="section">
+            <div class="section-title">Readiness & Recommendations <span class="badge">AI Analysis</span></div>
+            {readiness_gauge_html}
+            <div style="margin-top:20px;">
+                {warning_panel_html}
+            </div>
+        </div>"""
+
+    recovery_signals_section = ''
+    if hrv_bands_html or sleep_bars_html:
+        recovery_signals_section = f"""
+        <div class="section">
+            <div class="section-title">Recovery Signals <span class="badge">Monitoring</span></div>
+            <div class="two-col">
+                <div>
+                    <div style="color:{COLORS['text_secondary']};font-size:13px;margin-bottom:8px;">HRV with Baseline Bands</div>
+                    {hrv_bands_html}
+                </div>
+                <div>
+                    <div style="color:{COLORS['text_secondary']};font-size:13px;margin-bottom:8px;">Sleep Duration</div>
+                    {sleep_bars_html}
+                </div>
+            </div>
+        </div>"""
+
+    lag_section = ''
+    if lag_heatmap_html:
+        lag_section = f"""
+        <div class="section">
+            <div class="section-title">Training Impact Analysis <span class="badge">Lag Correlations</span></div>
+            <div style="color:{COLORS['text_secondary']};font-size:13px;margin-bottom:10px;">
+                How training metrics affect recovery at 0-3 day delays (* = p &lt; 0.05)
+            </div>
+            {lag_heatmap_html}
+        </div>"""
+
+    lt_section = ''
+    if lt_fitness_html:
+        lt_section = f"""
+        <div class="section">
+            <div class="section-title">LT & Fitness Age <span class="badge">Performance</span></div>
+            {lt_fitness_html}
+        </div>"""
 
     html = f"""<!DOCTYPE html>
 <html lang="en">
@@ -1349,6 +1897,14 @@ def build_dashboard(df, act, corr_df, top_corrs, insights):
             <div class="section-title">Overview <span class="badge">Summary</span></div>
             {cards_html}
         </div>
+
+        {readiness_section}
+
+        {recovery_signals_section}
+
+        {lag_section}
+
+        {lt_section}
 
         <div class="section">
             <div class="section-title">Training Timeline <span class="badge">Daily</span></div>
@@ -1434,9 +1990,28 @@ def main():
     print(f"  Generated {len(insights)} insights")
     print()
 
+    # 5b. Readiness analysis (if available)
+    readiness_data = None
+    if HAS_READINESS:
+        print("Running readiness analysis...")
+        try:
+            readiness_data = compute_readiness_for_dashboard(df)
+            df = readiness_data['df']  # use augmented df
+            latest = readiness_data.get('latest_readiness', {})
+            print(f"  Readiness score: {latest.get('readiness_score', 'N/A')}")
+            print(f"  Recommendation: {latest.get('recommendation', 'N/A')}")
+            print(f"  Confidence: {latest.get('confidence', 'N/A')}%")
+        except Exception as e:
+            print(f"  Readiness analysis failed: {e}")
+            readiness_data = None
+        print()
+    else:
+        print("Readiness system not available (readiness_system.py not found)")
+        print()
+
     # 6. Build dashboard
     print("Building interactive dashboard...")
-    html = build_dashboard(df, act, corr_df, top_corrs, insights)
+    html = build_dashboard(df, act, corr_df, top_corrs, insights, readiness_data=readiness_data)
 
     with open(OUTPUT_HTML, 'w', encoding='utf-8') as f:
         f.write(html)

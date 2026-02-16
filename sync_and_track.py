@@ -50,6 +50,7 @@ def run_sync():
     scripts = [
         ('garmin_fixed.py', 'Downloading activities...'),
         ('garmin_health_fixed.py', 'Downloading health data...'),
+        ('readiness_system.py', 'Running readiness analysis...'),
         ('analyze_and_dashboard.py', 'Generating base dashboard...'),
     ]
 

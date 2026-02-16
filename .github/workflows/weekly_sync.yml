@@ -56,6 +56,12 @@ jobs:
         run: python garmin_health_fixed.py
         continue-on-error: true
 
+      - name: Run readiness analysis
+        env:
+          DATA_FOLDER: garmin_data
+        run: python readiness_system.py
+        continue-on-error: true
+
       - name: Generate dashboard
         env:
           DATA_FOLDER: garmin_data
@@ -74,6 +80,10 @@ jobs:
           # Keep progress log for persistence across runs
           if [ -f progress_log.csv ]; then
             cp progress_log.csv deploy/progress_log.csv
+          fi
+          # Copy readiness reports if available
+          if [ -f my_baselines.json ]; then
+            cp my_baselines.json deploy/my_baselines.json
           fi
           # Create a simple nav page
           cat > deploy/nav.html << 'NAVEOF'
