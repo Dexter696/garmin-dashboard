@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta, date
 from pathlib import Path
 from dotenv import load_dotenv
-import garth
+from garminconnect import Garmin
 import pandas as pd
 from collections import defaultdict
 
@@ -19,26 +19,24 @@ class GarminHealthScraper:
     def __init__(self):
         self.email = os.getenv('GARMIN_EMAIL')
         self.password = os.getenv('GARMIN_PASSWORD')
+        self.token_str = os.getenv('GARMIN_TOKENS', '')
         self.data_folder = Path(os.getenv('DATA_FOLDER', 'garmin_data'))
         self.data_folder.mkdir(exist_ok=True)
 
         self.health_folder = self.data_folder / "health"
         self.health_folder.mkdir(exist_ok=True)
-
-        self.token_store = self.data_folder / ".garth"
+        self.api = None
 
     def login(self):
         try:
-            if self.token_store.exists():
-                import shutil
-                if self.token_store.is_file():
-                    self.token_store.unlink()
-                else:
-                    shutil.rmtree(self.token_store)
-
-            print("Logging in...")
-            garth.login(self.email, self.password)
-            garth.save(self.token_store)
+            if self.token_str:
+                print("Logging in with stored tokens...")
+                self.api = Garmin(tokenstore=self.token_str)
+                self.api.login()
+            else:
+                print("Logging in with credentials...")
+                self.api = Garmin(self.email, self.password)
+                self.api.login()
             print(f"Logged in as {self.email}")
             return True
         except Exception as err:
@@ -60,7 +58,7 @@ class GarminHealthScraper:
         sleep_data = []
         for d in self.get_date_range(90):
             try:
-                resp = garth.connectapi(
+                resp = self.api.connectapi(
                     "/wellness-service/wellness/dailySleepData",
                     params={"date": d.strftime('%Y-%m-%d')}
                 )
@@ -92,7 +90,7 @@ class GarminHealthScraper:
         stress_data = []
         for d in self.get_date_range(90):
             try:
-                data = garth.connectapi(
+                data = self.api.connectapi(
                     f"/wellness-service/wellness/dailyStress/{d.strftime('%Y-%m-%d')}"
                 )
                 if data and isinstance(data, dict):
@@ -112,7 +110,7 @@ class GarminHealthScraper:
         hr_data = []
         for d in self.get_date_range(90):
             try:
-                data = garth.connectapi(
+                data = self.api.connectapi(
                     "/wellness-service/wellness/dailyHeartRate",
                     params={"date": d.strftime('%Y-%m-%d')}
                 )
@@ -136,7 +134,7 @@ class GarminHealthScraper:
         start_str = dates[0].strftime('%Y-%m-%d')
         end_str = dates[-1].strftime('%Y-%m-%d')
         try:
-            data = garth.connectapi(
+            data = self.api.connectapi(
                 f"/hrv-service/hrv/daily/{start_str}/{end_str}"
             )
             if data and isinstance(data, dict):
@@ -158,7 +156,7 @@ class GarminHealthScraper:
         tr_data = []
         for d in self.get_date_range(90):
             try:
-                resp = garth.connectapi(
+                resp = self.api.connectapi(
                     f"/metrics-service/metrics/trainingreadiness/{d.strftime('%Y-%m-%d')}"
                 )
                 if resp and isinstance(resp, list) and resp:
@@ -190,7 +188,7 @@ class GarminHealthScraper:
             row = {'date': ds}
             found = False
             try:
-                resp = garth.connectapi(
+                resp = self.api.connectapi(
                     '/metrics-service/metrics/endurancescore',
                     params={'calendarDate': ds}
                 )
@@ -201,7 +199,7 @@ class GarminHealthScraper:
             except:
                 pass
             try:
-                resp = garth.connectapi(
+                resp = self.api.connectapi(
                     '/metrics-service/metrics/hillscore',
                     params={'calendarDate': ds}
                 )
@@ -224,7 +222,7 @@ class GarminHealthScraper:
         start_str = dates[0].strftime('%Y-%m-%d')
         end_str = dates[-1].strftime('%Y-%m-%d')
         try:
-            data = garth.connectapi(
+            data = self.api.connectapi(
                 f"/metrics-service/metrics/maxmet/daily/{start_str}/{end_str}"
             )
             if data and isinstance(data, list):
@@ -241,12 +239,123 @@ class GarminHealthScraper:
         print(f"  Got {len(vo2_data)} readings")
         return vo2_data
 
+    def fetch_lactate_threshold_history(self):
+        """Fetch lactate threshold speed and heart rate history."""
+        print("\n[LACTATE THRESHOLD] Fetching lactate threshold history...")
+        lt_data = []
+        dates = self.get_date_range(90)
+        start_str = dates[0].strftime('%Y-%m-%d')
+        end_str = dates[-1].strftime('%Y-%m-%d')
+
+        lt_speed_by_date = {}
+        lt_hr_by_date = {}
+
+        # Fetch LT speed history
+        try:
+            data = self.api.connectapi(
+                f"/biometric-service/stats/lactateThresholdSpeed/range/{start_str}/{end_str}"
+            )
+            if data and isinstance(data, list):
+                for entry in data:
+                    d = entry.get('calendarDate')
+                    val = entry.get('lactateThresholdSpeed')
+                    if d and val is not None:
+                        # Convert m/s to min/km pace
+                        speed_ms = val / 100.0  # API returns cm/s
+                        if speed_ms > 0:
+                            pace_min_km = (1000 / speed_ms) / 60
+                            lt_speed_by_date[d] = round(pace_min_km, 2)
+        except Exception as e:
+            print(f"  LT speed error: {e}")
+
+        # Fetch LT heart rate history
+        try:
+            data = self.api.connectapi(
+                f"/biometric-service/stats/lactateThresholdHeartRate/range/{start_str}/{end_str}"
+            )
+            if data and isinstance(data, list):
+                for entry in data:
+                    d = entry.get('calendarDate')
+                    val = entry.get('lactateThresholdHeartRate')
+                    if d and val is not None:
+                        lt_hr_by_date[d] = int(val)
+        except Exception as e:
+            print(f"  LT HR error: {e}")
+
+        # Merge into records by date
+        all_dates = set(lt_speed_by_date.keys()) | set(lt_hr_by_date.keys())
+        for d in sorted(all_dates):
+            row = {'date': d}
+            if d in lt_speed_by_date:
+                row['ltPaceMinKm'] = lt_speed_by_date[d]
+            if d in lt_hr_by_date:
+                row['ltHeartRate'] = lt_hr_by_date[d]
+            lt_data.append(row)
+
+        print(f"  Got {len(lt_data)} days (speed: {len(lt_speed_by_date)}, HR: {len(lt_hr_by_date)})")
+        return lt_data
+
+    def fetch_training_status(self):
+        """Fetch training status (productive/detraining/etc) and related metrics."""
+        print("\n[TRAINING STATUS] Fetching training status...")
+        ts_data = []
+        for d in self.get_date_range(90):
+            try:
+                data = self.api.connectapi(
+                    f"/metrics-service/metrics/trainingstatus/aggregated/{d.strftime('%Y-%m-%d')}"
+                )
+                if data and isinstance(data, dict):
+                    entries = data.get('metricTrainingStatusList', [])
+                    if entries:
+                        entry = entries[0]
+                        row = {
+                            'date': d.strftime('%Y-%m-%d'),
+                            'trainingStatus': entry.get('trainingStatus'),
+                            'trainingStatusMessage': entry.get('trainingStatusMessage'),
+                        }
+                        # Also grab load focus if available
+                        load_focus = entry.get('loadFocus', {})
+                        if isinstance(load_focus, dict):
+                            row['loadFocusLow'] = load_focus.get('lowAerobic')
+                            row['loadFocusHigh'] = load_focus.get('highAerobic')
+                            row['loadFocusAnaerobic'] = load_focus.get('anaerobic')
+                        ts_data.append(row)
+            except:
+                continue
+        print(f"  Got {len(ts_data)} days")
+        return ts_data
+
+    def fetch_fitness_age(self):
+        """Fetch fitness age history."""
+        print("\n[FITNESS AGE] Fetching fitness age...")
+        fa_data = []
+        # Fitness age doesn't change daily, sample weekly
+        dates = self.get_date_range(90)
+        sampled = [dates[i] for i in range(0, len(dates), 7)] + [dates[-1]]
+        for d in sampled:
+            try:
+                data = self.api.connectapi(
+                    f"/fitnessage-service/fitnessage/{d.strftime('%Y-%m-%d')}"
+                )
+                if data and isinstance(data, dict):
+                    fa = data.get('fitnessAge')
+                    if fa is not None:
+                        fa_data.append({
+                            'date': d.strftime('%Y-%m-%d'),
+                            'fitnessAge': round(fa, 1),
+                            'chronologicalAge': data.get('chronologicalAge'),
+                        })
+            except:
+                continue
+        print(f"  Got {len(fa_data)} readings")
+        return fa_data
+
     def fetch_daily_summary(self):
         print("\n[DAILY SUMMARY] Fetching daily summaries...")
         summary_data = []
         for d in self.get_date_range(90):
             try:
-                data = garth.connectapi(
+                data = self.api.connectapi(
                     "/usersummary-service/usersummary/daily",
                     params={"calendarDate": d.strftime('%Y-%m-%d')}
                 )
@@ -384,6 +493,9 @@ def main():
     all_data['training_readiness'] = scraper.fetch_training_readiness()
     all_data['scores'] = scraper.fetch_endurance_hill_scores()
     all_data['vo2max'] = scraper.fetch_vo2max_history()
+    all_data['lactate_threshold'] = scraper.fetch_lactate_threshold_history()
+    all_data['training_status'] = scraper.fetch_training_status()
+    all_data['fitness_age'] = scraper.fetch_fitness_age()
     all_data['daily_summary'] = scraper.fetch_daily_summary()
 
     print("\n" + "=" * 60)

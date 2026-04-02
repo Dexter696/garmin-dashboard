@@ -8,7 +8,7 @@ import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
-import garth
+from garminconnect import Garmin
 import pandas as pd
 
 load_dotenv()
@@ -17,33 +17,30 @@ class GarminSync:
     def __init__(self):
         self.email = os.getenv('GARMIN_EMAIL')
         self.password = os.getenv('GARMIN_PASSWORD')
+        self.token_str = os.getenv('GARMIN_TOKENS', '')
         self.data_folder = Path(os.getenv('DATA_FOLDER', 'garmin_data'))
         self.data_folder.mkdir(exist_ok=True)
-        self.token_store = self.data_folder / ".garth"
-        
+        self.api = None
+
     def login(self):
-        """Přihlášení"""
+        """Přihlášení - preferuje uložené OAuth tokeny aby se zabránilo 429"""
         try:
-            # Smažeme staré tokeny
-            if self.token_store.exists():
-                import shutil
-                if self.token_store.is_file():
-                    self.token_store.unlink()
-                else:
-                    shutil.rmtree(self.token_store)
-            
-            print("🔐 Přihlašuji se...")
-            garth.login(self.email, self.password)
-            garth.save(self.token_store)
-            
+            if self.token_str:
+                print("🔑 Přihlašuji pomocí uložených tokenů...")
+                self.api = Garmin(tokenstore=self.token_str)
+                self.api.login()
+            else:
+                print("🔐 Přihlašuji se pomocí hesla...")
+                self.api = Garmin(self.email, self.password)
+                self.api.login()
+
             try:
-                profile = garth.connectapi("/userprofile-service/userprofile")
-                print(f"✅ Přihlášen: {profile.get('displayName', 'Uživatel')}")
+                name = self.api.get_full_name()
+                print(f"✅ Přihlášen: {name}")
             except:
-                print(f"✅ Přihlášen!")
-            
+                print("✅ Přihlášen!")
             return True
-            
+
         except Exception as err:
             print(f"❌ Chyba: {err}")
             return False
@@ -108,7 +105,7 @@ class GarminSync:
             try:
                 print(f"\n[Pokus {idx}] {method['name']}...")
                 
-                response = garth.connectapi(method['url'], params=method['params'])
+                response = self.api.connectapi(method['url'], params=method['params'])
                 
                 # Zjistíme typ odpovědi
                 print(f"   Typ odpovědi: {type(response).__name__}")
