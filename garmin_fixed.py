@@ -4,12 +4,17 @@ Správně zpracovává různé formáty odpovědí z API
 """
 
 import os
+import sys
 import json
 from datetime import datetime, timedelta
 from pathlib import Path
 from dotenv import load_dotenv
 from garminconnect import Garmin
 import pandas as pd
+
+# Force UTF-8 output so emojis don't crash on Windows terminals
+if hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
 
 load_dotenv()
 
@@ -25,13 +30,12 @@ class GarminSync:
     def login(self):
         """Přihlášení - preferuje uložené OAuth tokeny aby se zabránilo 429"""
         try:
+            self.api = Garmin(self.email, self.password)
             if self.token_str:
                 print("🔑 Přihlašuji pomocí uložených tokenů...")
-                self.api = Garmin(tokenstore=self.token_str)
-                self.api.login()
+                self.api.login(tokenstore=self.token_str)
             else:
                 print("🔐 Přihlašuji se pomocí hesla...")
-                self.api = Garmin(self.email, self.password)
                 self.api.login()
 
             try:

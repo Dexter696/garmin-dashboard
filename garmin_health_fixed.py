@@ -29,13 +29,12 @@ class GarminHealthScraper:
 
     def login(self):
         try:
+            self.api = Garmin(self.email, self.password)
             if self.token_str:
                 print("Logging in with stored tokens...")
-                self.api = Garmin(tokenstore=self.token_str)
-                self.api.login()
+                self.api.login(tokenstore=self.token_str)
             else:
                 print("Logging in with credentials...")
-                self.api = Garmin(self.email, self.password)
                 self.api.login()
             print(f"Logged in as {self.email}")
             return True
