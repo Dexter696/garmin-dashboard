@@ -1,0 +1,78 @@
+{
+  "computed_at": "2026-05-02T07:47:21.109860",
+  "window_days": 7,
+  "baselines": {
+    "hrv": {
+      "mean": 52.71,
+      "sd": 7.83,
+      "median": 54.0,
+      "min": 36.0,
+      "max": 59.0,
+      "n": 7,
+      "column": "hrvLastNightAvg",
+      "upper_05sd": 56.62,
+      "lower_05sd": 48.8,
+      "lower_10sd": 44.88,
+      "cv_pct": 14.85
+    },
+    "rhr": {
+      "mean": 52.43,
+      "sd": 1.9,
+      "median": 52.0,
+      "min": 50.0,
+      "max": 55.0,
+      "n": 7,
+      "column": "restingHeartRate",
+      "upper_3bpm": 55.43,
+      "lower_3bpm": 49.43,
+      "upper_5bpm": 57.43,
+      "upper_7bpm": 59.43,
+      "elevated_5pct": 55.05
+    },
+    "sleep_hours": {
+      "mean": 7.99,
+      "sd": 0.69,
+      "median": 8.16,
+      "min": 6.67,
+      "max": 8.65,
+      "n": 7,
+      "column": "sleepTimeHours"
+    },
+    "sleep_score": {
+      "mean": 85.43,
+      "sd": 8.85,
+      "median": 87.0,
+      "min": 67.0,
+      "max": 94.0,
+      "n": 7,
+      "column": "sleepScore"
+    },
+    "stress": {
+      "mean": 29.43,
+      "sd": 4.2,
+      "median": 30.0,
+      "min": 25.0,
+      "max": 37.0,
+      "n": 7,
+      "column": "avgStressLevel"
+    },
+    "body_battery_wake": {
+      "mean": 82.71,
+      "sd": 22.72,
+      "median": 88.0,
+      "min": 35.0,
+      "max": 100.0,
+      "n": 7,
+      "column": "bodyBatteryAtWake"
+    },
+    "body_battery_high": {
+      "mean": 82.86,
+      "sd": 22.67,
+      "median": 88.0,
+      "min": 35.0,
+      "max": 100.0,
+      "n": 7,
+      "column": "bodyBatteryHighest"
+    }
+  }
+}
